@@ -21,7 +21,7 @@
 
 #define DT_STORE_MINUTE  5   // every 5 minutes write to actually time to EEPROM
 #define SD_INIT_TIME     5   // every 6 seconds check SD card ready if is not available
-#define GPRS_SUSPEND_TIME  ((unsigned long)(5*60))  // (second) how long silence on line is deemed as communication finish
+#define GPRS_SUSPEND_TIME  ((unsigned long)1*60*COUNT_SECOND)  // (second) how long silence on line is deemed as communication finish
 #define TIME_LEAP    -151L   // leap ms per minute. Check how many milisecond clock different per long time and compute it.
 
 // SD card chip selected
@@ -63,6 +63,18 @@ Adafruit_TFTLCD tft(LCD_CS, LCD_CD, LCD_WR, LCD_RD, LCD_RESET);
 #define SEC_PER_DAY      86400  // per day (24*60*60)
 #define SEC_FOR_Y2K    946684800UL
 #define UTC_SHIFT           1L  // + 1 UTC for Prague
+
+#define __MONTH__ (\
+      __DATE__[2] == 'n' ? (__DATE__[1] == 'a' ? 1 : 6) \
+    : __DATE__[2] == 'b' ? 2 \
+    : __DATE__[2] == 'r' ? (__DATE__[0] == 'M' ? 3 : 4) \
+    : __DATE__[2] == 'y' ? 5 \
+    : __DATE__[2] == 'l' ? 7 \
+    : __DATE__[2] == 'g' ? 8 \
+    : __DATE__[2] == 'p' ? 9 \
+    : __DATE__[2] == 't' ? 10 \
+    : __DATE__[2] == 'v' ? 11 \
+    : 12)
 
 static byte monthDays[] = {0,31,28,31,30,31,30,31,31,30,31,30,31};
 static unsigned short yearDays[] = {0,31,59,90,120,151,181,212,243,273,304,334};
@@ -124,12 +136,12 @@ short dirCounter;           // counter of dir /LOG/XXX/ on SD card
 void setup(void) 
 {
   // default time
-  local_time.year = 2015;
-  local_time.month = 8;
-  local_time.day = 12;
-  local_time.hour = 18;
-  local_time.minute = 22;
-  local_time.second = 7;
+  local_time.year   = 2000 + atoi2(__DATE__ + 9);
+  local_time.month  = __MONTH__;
+  local_time.day    = atoi2(__DATE__ + 4);
+  local_time.hour   = atoi2(__TIME__);
+  local_time.minute = atoi2(__TIME__ + 3);
+  local_time.second = atoi2(__TIME__ + 6);
   local_time.milisecond = 0;
 #ifdef FORCE_TIME
   EEPROM[0] = '\0';   // damage control byte in timeEPROM (rountine timeEEPROM() save it)
@@ -138,7 +150,8 @@ void setup(void)
   local_time.leap = TIME_LEAP;
   local_time.change = DT_TIME_CHANGE | DT_DATE_CHANGE;
 
-  Serial.begin(38400);
+  Serial.begin(38400, SERIAL_8N1);
+  Serial.setTimeout(100);
 #ifndef ECHO_ON_SERIAL
   Serial.println(F("GPRS traffic logger. Software by Zdeno Sekerak (c) 2015."));
 #endif
@@ -269,7 +282,7 @@ bool sdInit()
 void sdMakeNew()
 {
   char strLOG_FILE[] = { LOG_FILE };
-  char pcapHeader[] = PCAP_HEADER;
+  unsigned char pcapHeader[] = PCAP_HEADER;
 
   // subdir
   strLOG_FILE[ LOG_SUBDIR_IND    ] = '0' + (dirCounter / 100);
@@ -287,6 +300,10 @@ void sdMakeNew()
   strLOG_FILE[LOG_DELIMITER + 6] = (local_time.hour % 10) + '0';
   strLOG_FILE[LOG_DELIMITER + 7] = (local_time.minute / 10) + '0';
   strLOG_FILE[LOG_DELIMITER + 8] = (local_time.minute % 10) + '0';
+
+  // close if open
+  if ( dataFile )
+    dataFile.close();
 
   // open it
   dataFile = SD.open(strLOG_FILE, FILE_WRITE);
@@ -358,7 +375,7 @@ void timeEEPROM(bool timeStore)
     {
       EEPROM[0] = DT_MARK0;
       EEPROM[1] = DT_MARK1;
-      for(int i=0; i<sizeof(local_time); i++)
+      for(unsigned int i=0; i<sizeof(local_time); i++)
       {
         EEPROM[i+2] = ((unsigned char*)&local_time)[i];
       }
@@ -370,7 +387,7 @@ void timeEEPROM(bool timeStore)
     if(( EEPROM[0] == DT_MARK0 )
     && ( EEPROM[1] == DT_MARK1 ))
     {
-      for(int i=0; i<sizeof(local_time); i++)
+      for(unsigned int i=0; i<sizeof(local_time); i++)
       {
         ((unsigned char*)&local_time)[i] = EEPROM[i+2];
       }
@@ -379,7 +396,7 @@ void timeEEPROM(bool timeStore)
     { // damage that store it
       EEPROM[0] = DT_MARK0;
       EEPROM[1] = DT_MARK1;
-      for(int i=0; i<sizeof(local_time); i++)
+      for(unsigned int i=0; i<sizeof(local_time); i++)
       {
         EEPROM[i+2] = ((unsigned char*)&local_time)[i];
       }
@@ -397,7 +414,7 @@ bool timeCounter()
 
    // added second
    if(((local_time.lastMillis + COUNT_SECOND) < actualMillis)
-   || (local_time.lastMillis > actualMillis))    // overflow 1 per 50 days
+   || (local_time.lastMillis > actualMillis))    // rollover (1 per 50 days)
    {
       // how many seconds add
       if((local_time.lastMillis + COUNT_SECOND) < actualMillis)
@@ -407,7 +424,7 @@ bool timeCounter()
       }
       else 
       {
-         // overflow
+         // rollover
          local_time.second++;
          local_time.milisecond = 0;
       }
@@ -543,6 +560,17 @@ void sdShowFileName(short y, char* log_file)
 // -----------------------------------------------------------------------------
 
 
+// get number from char presentation
+byte atoi2(const char* buffer)
+{
+  if( isAlphaNumeric(buffer[0]))
+      return (buffer[0] - '0') * 10 + buffer[1] - '0';
+
+  return buffer[1] - '0';
+}
+// -----------------------------------------------------------------------------
+
+
 // utility function for digital clock display: prints preceding colon and leading 0
 // buffer must have size 4 Bytes
 char* printDigits(byte digits, char* buffer)
@@ -594,7 +622,7 @@ void terminalShow(char *readBytes, unsigned short readLength)
      else
          tft.print(readBytes[i]);
 
-    // zmazeme
+    // clear it
     if( tft.getCursorY() > 305 )
         terminalInit();
   }
@@ -607,3 +635,4 @@ void terminalShow(char *readBytes, unsigned short readLength)
       terminalInit();
 }
 // -----------------------------------------------------------------------------
+
