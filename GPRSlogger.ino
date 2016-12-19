@@ -21,7 +21,7 @@
 
 #define DT_STORE_MINUTE  5   // every 5 minutes write to actually time to EEPROM
 #define SD_INIT_TIME     5   // every 6 seconds check SD card ready if is not available
-#define GPRS_SUSPEND_TIME  ((unsigned long)1*60*COUNT_SECOND)  // (second) how long silence on line is deemed as communication finish
+#define GPRS_SUSPEND_TIME  ((unsigned long)60*60*COUNT_SECOND)  // (second) how long silence on line is deemed as communication finish
 #define TIME_LEAP    -151L   // leap ms per minute. Check how many milisecond clock different per long time and compute it.
 
 // SD card chip selected
@@ -38,10 +38,10 @@
 #define LCD_RESET A4 // Can alternately just connect to Arduino's reset pin
 
 // Assign human-readable names to some common 16-bit color values:
-#define	BLACK   0x0000
-#define	BLUE    0x001F
-#define	RED     0xF800
-#define	GREEN   0x07E0
+#define BLACK   0x0000
+#define BLUE    0x001F
+#define RED     0xF800
+#define GREEN   0x07E0
 #define CYAN    0x07FF
 #define MAGENTA 0xF81F
 #define YELLOW  0xFFE0
@@ -126,7 +126,7 @@ typedef struct {
 T_DateTime local_time;
 T_Terminal terminal;
 File dataFile;
-char serial_buffer[64];     // maximum of arduino interrupt, more does not make sense
+char serial_buffer[256];     // maximum of arduino interrupt, more does not make sense
 unsigned long timeSuspend;  // check time when on wire is quiet
 unsigned long charCounter;
 short dirCounter;           // counter of dir /LOG/XXX/ on SD card
@@ -214,7 +214,7 @@ void loop(void)
 
    // when data more than 5 minutes not incomming then close and open next file
    if(( charCounter > 0 )
-   && ((millis() - timeSuspend) >= ( GPRS_SUSPEND_TIME * COUNT_SECOND )))
+   && ((millis() - timeSuspend) >= GPRS_SUSPEND_TIME ))
    {
       // close
       if (dataFile)
