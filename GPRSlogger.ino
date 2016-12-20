@@ -10,6 +10,7 @@
 #include <SPI.h>
 #include <SD.h>
 #include <EEPROM.h>
+#include <avr/wdt.h>
 #include <Adafruit_GFX.h>    // Core graphics library
 #include <Adafruit_TFTLCD.h> // Hardware-specific library
 
@@ -21,7 +22,7 @@
 
 #define DT_STORE_MINUTE  5   // every 5 minutes write to actually time to EEPROM
 #define SD_INIT_TIME     5   // every 6 seconds check SD card ready if is not available
-#define GPRS_SUSPEND_TIME  ((unsigned long)60*60*COUNT_SECOND)  // (second) how long silence on line is deemed as communication finish
+#define GPRS_SUSPEND_TIME  ((unsigned long)60*60*COUNT_SECOND)  // (milisecond) how long silence on line is deemed as communication finish
 #define TIME_LEAP    -151L   // leap ms per minute. Check how many milisecond clock different per long time and compute it.
 
 // SD card chip selected
@@ -57,7 +58,7 @@
 Adafruit_TFTLCD tft(LCD_CS, LCD_CD, LCD_WR, LCD_RD, LCD_RESET);
 
 // defines for second constants
-#define COUNT_SECOND  1000
+#define COUNT_SECOND      1000  // how many milliseconds need for second
 #define SEC_PER_MIN         60  // per minute
 #define SEC_PER_HOUR      3600  // per hour
 #define SEC_PER_DAY      86400  // per day (24*60*60)
@@ -114,6 +115,7 @@ typedef struct {
   unsigned char minute;
   unsigned char second;
   unsigned short milisecond;
+  unsigned long unixTime;
   signed short leap;      // leap time -> ms per minute
   unsigned char change;   // 0x01 - time change, 0x02 - date change
 } T_DateTime;
@@ -126,7 +128,7 @@ typedef struct {
 T_DateTime local_time;
 T_Terminal terminal;
 File dataFile;
-char serial_buffer[256];     // maximum of arduino interrupt, more does not make sense
+char serial_buffer[192];    // maximum of arduino interrupt
 unsigned long timeSuspend;  // check time when on wire is quiet
 unsigned long charCounter;
 short dirCounter;           // counter of dir /LOG/XXX/ on SD card
@@ -149,11 +151,12 @@ void setup(void)
   timeEEPROM(false);  // read from EEPROM last know time
   local_time.leap = TIME_LEAP;
   local_time.change = DT_TIME_CHANGE | DT_DATE_CHANGE;
+  local_time.unixTime = timeUnix();
 
   Serial.begin(38400, SERIAL_8N1);
   Serial.setTimeout(100);
 #ifndef ECHO_ON_SERIAL
-  Serial.println(F("GPRS traffic logger. Software by Zdeno Sekerak (c) 2015."));
+  Serial.println(F("GPRS traffic logger. Software by Zdeno Sekerak (c) 2016."));
 #endif
 
   tft.reset();
@@ -170,6 +173,9 @@ void setup(void)
   terminalInit();
   timeSuspend = millis();
   charCounter = 0;
+
+  // enable watchdog
+  wdt_enable(WDTO_8S);
 }
 // -----------------------------------------------------------------------------
 
@@ -177,13 +183,6 @@ void setup(void)
 void loop(void) 
 {
    unsigned short readLength;
-   
-   // clock runtime
-   if( timeCounter())
-   {
-      timeShowClock(40);
-      timeEEPROM(true);   // every 5 min store it
-   }
 
    // something on serial channel
    // i rounding when data incomming (this is most important)
@@ -211,20 +210,30 @@ void loop(void)
       sdInit();
       sdMakeNew();
    }
-
-   // when data more than 5 minutes not incomming then close and open next file
-   if(( charCounter > 0 )
-   && ((millis() - timeSuspend) >= GPRS_SUSPEND_TIME ))
+   
+   // clock runtime
+   if( timeCounter())
    {
-      // close
-      if (dataFile)
+      timeShowClock(40);
+      timeEEPROM(true);   // every 5 min store it
+
+      // when data more than 60 minutes not incomming then close and open next file
+      if(( charCounter > 0 )
+      && ((millis() - timeSuspend) >= GPRS_SUSPEND_TIME ))
       {
-         dataFile.close();
-         // open next file in order
-         charCounter = 0;
-         sdMakeNew();
+        // close
+        if (dataFile)
+        {
+           dataFile.close();
+           // open next file in order
+           charCounter = 0;
+           sdMakeNew();
+        }
       }
-   }
+  } // if( timeCounter())
+
+  // reset watchdog
+  wdt_reset();
 }
 // -----------------------------------------------------------------------------
 
@@ -253,17 +262,18 @@ bool sdInit()
   SdFile::dateTimeCallback(dateTime);
   strLOG_FILE[ LOG_SUBDIR_IND ] = '\0';
 
-  // vyrobim hlavny LOG adresar
+  // make main LOG directory
   if( !SD.exists(strLOG_FILE)) {
     SD.mkdir(strLOG_FILE);
   }
 
-  // podadresare
+  // subdirectory
   strLOG_FILE[ LOG_SUBDIR_IND ] = '/';
   strLOG_FILE[ LOG_DELIMITER ] = '\0';
 
   do {
     dirCounter++;
+    dirCounter = dirCounter % 1000;   // max 999
     strLOG_FILE[ LOG_SUBDIR_IND    ] = '0' + (dirCounter / 100);
     strLOG_FILE[ LOG_SUBDIR_IND + 1] = '0' + ((dirCounter % 100) / 10);
     strLOG_FILE[ LOG_SUBDIR_IND + 2] = '0' + (dirCounter % 10);
@@ -346,8 +356,8 @@ void pcapStore(char *serial_buffer, unsigned short readLength)
 {
   pcap_pkthdr packetHeader;
 
-  packetHeader.tv_sec = timeUnix();
-  packetHeader.tv_usec = millis() - local_time.lastMillis;
+  packetHeader.tv_sec = local_time.unixTime;
+  packetHeader.tv_usec = local_time.milisecond + millis() - local_time.lastMillis;
   packetHeader.caplen = readLength;
   packetHeader.len = readLength;
 
@@ -356,7 +366,6 @@ void pcapStore(char *serial_buffer, unsigned short readLength)
   dataFile.flush();
 
   // write data
-  // !!! need compensation 0x7D
   dataFile.write( serial_buffer, readLength);
   dataFile.flush();
 }
@@ -406,30 +415,33 @@ void timeEEPROM(bool timeStore)
 // -----------------------------------------------------------------------------
 
 
-// add second and return true if do it
+// add second (when change it) and return true if do it
 bool timeCounter()
 {
    unsigned char days;
    unsigned long actualMillis =  millis();
-
+   unsigned long diffMillis = actualMillis - local_time.lastMillis;
+   
    // added second
-   if(((local_time.lastMillis + COUNT_SECOND) < actualMillis)
-   || (local_time.lastMillis > actualMillis))    // rollover (1 per 50 days)
+   if((diffMillis > COUNT_SECOND)
+   || (local_time.lastMillis > actualMillis))    // rollover (1 every 50 days)
    {
       // how many seconds add
-      if((local_time.lastMillis + COUNT_SECOND) < actualMillis)
+      if(local_time.lastMillis <= actualMillis)
       {
-         local_time.second += (actualMillis - local_time.lastMillis) / COUNT_SECOND;
-         local_time.milisecond = (actualMillis - local_time.lastMillis) % COUNT_SECOND;
+         local_time.second += diffMillis / COUNT_SECOND;
+         local_time.unixTime += diffMillis / COUNT_SECOND;
+         local_time.milisecond = diffMillis % COUNT_SECOND;
       }
       else 
       {
          // rollover
          local_time.second++;
+         local_time.unixTime++;
          local_time.milisecond = 0;
       }
 
-      local_time.lastMillis =actualMillis;
+      local_time.lastMillis = actualMillis - local_time.milisecond;
       local_time.change |= DT_TIME_CHANGE;
 
       // overflow minute, hour, day, month, year
@@ -491,8 +503,8 @@ void tftHomeScreen()
 
   tft.setTextColor(BLUE);
   tft.setTextSize(1);
-  tft.setCursor(35, 310);
-  tft.print(F("Software by Zdeno Sekerak (c) 2015"));
+  tft.setCursor(2, 310);
+  tft.print(F("Software by Zdeno Sekerak (c)2016, v0.1"));
 }
 // -----------------------------------------------------------------------------
 
