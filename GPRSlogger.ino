@@ -63,7 +63,12 @@ Adafruit_TFTLCD tft(LCD_CS, LCD_CD, LCD_WR, LCD_RD, LCD_RESET);
 #define SEC_PER_HOUR      3600  // per hour
 #define SEC_PER_DAY      86400  // per day (24*60*60)
 #define SEC_FOR_Y2K    946684800UL
-#define UTC_SHIFT           1L  // + 1 UTC for Prague
+#define UTC_SHIFT        -151L  // + 1 UTC for Prague
+
+#define DT_MARK0 'D'
+#define DT_MARK1 'T'
+#define DT_TIME_CHANGE   0x01
+#define DT_DATE_CHANGE   0x02
 
 #define __MONTH__ (\
       __DATE__[2] == 'n' ? (__DATE__[1] == 'a' ? 1 : 6) \
@@ -80,9 +85,10 @@ Adafruit_TFTLCD tft(LCD_CS, LCD_CD, LCD_WR, LCD_RD, LCD_RESET);
 static byte monthDays[] = {0,31,28,31,30,31,30,31,31,30,31,30,31};
 static unsigned short yearDays[] = {0,31,59,90,120,151,181,212,243,273,304,334};
 
-#define PPP_START    0x7E
-#define PPP_REPLACE  0x7D
+#define PPP_DELIMITER  0x7E
+#define PPP_REPLACE    0x7D
 #define PCAP_HEADER {0xD4, 0xC3, 0xB2, 0xA1, 0x02, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0x00, 0x00, 0x09, 0x00, 0x00, 0x00};
+// -----------------------------------------------------------------------------
 
 typedef struct {
    unsigned long magic;
@@ -100,11 +106,6 @@ typedef struct  {
    unsigned long caplen; 
    unsigned long len;    
 } pcap_pkthdr;
-
-#define DT_MARK0 'D'
-#define DT_MARK1 'T'
-#define DT_TIME_CHANGE   0x01
-#define DT_DATE_CHANGE   0x02
 
 typedef struct {
   unsigned long lastMillis;
@@ -124,6 +125,7 @@ typedef struct {
   short X;
   short Y;
 } T_Terminal;
+// -----------------------------------------------------------------------------
 
 T_DateTime local_time;
 T_Terminal terminal;
