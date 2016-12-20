@@ -50,3 +50,5 @@ If the card is initialized then
 - the SD card will store data immediately. It can be removed at any time.
 - sw don't format the card or not clear data (but must have a supported format FAT16, FAT32)
 - if you want change the constant LOG_FILE note that SD routines can work with file format 8 + 3
+- SW catched data in RAW format without replacement 0x7D and divide 0x7E. If you want see Wireshark format plase use \Normalize\GPRS_norm.exe
+  or \Normalize\normalize.bat for all files in subdirectories.
