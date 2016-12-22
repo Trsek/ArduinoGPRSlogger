@@ -63,7 +63,7 @@ Adafruit_TFTLCD tft(LCD_CS, LCD_CD, LCD_WR, LCD_RD, LCD_RESET);
 #define SEC_PER_HOUR      3600  // per hour
 #define SEC_PER_DAY      86400  // per day (24*60*60)
 #define SEC_FOR_Y2K    946684800UL
-#define UTC_SHIFT        -151L  // + 1 UTC for Prague
+#define UTC_SHIFT           1L  // + 1 UTC for Prague
 
 // defines for log view
 #define LOG_Y         145
