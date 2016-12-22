@@ -65,10 +65,14 @@ Adafruit_TFTLCD tft(LCD_CS, LCD_CD, LCD_WR, LCD_RD, LCD_RESET);
 #define SEC_FOR_Y2K    946684800UL
 #define UTC_SHIFT        -151L  // + 1 UTC for Prague
 
+// defines for log view
+#define LOG_Y         145
+#define LOG_HEIGHT    160   // 20 lines (LOG_HEIGHT / FONT_HEIGHT)
+#define FONT_WIDTH      6
+#define FONT_HEIGHT     8
+
 #define DT_MARK0 'D'
 #define DT_MARK1 'T'
-#define DT_TIME_CHANGE   0x01
-#define DT_DATE_CHANGE   0x02
 
 #define __MONTH__ (\
       __DATE__[2] == 'n' ? (__DATE__[1] == 'a' ? 1 : 6) \
@@ -118,12 +122,13 @@ typedef struct {
   unsigned short milisecond;
   unsigned long unixTime;
   signed short leap;      // leap time -> ms per minute
-  unsigned char change;   // 0x01 - time change, 0x02 - date change
+  unsigned char change_Date:1, change_Hour:1, change_Minute:1, change_Second:1;
 } T_DateTime;
 
 typedef struct {
   short X;
   short Y;
+  short clearY;
 } T_Terminal;
 // -----------------------------------------------------------------------------
 
@@ -152,7 +157,10 @@ void setup(void)
 #endif
   timeEEPROM(false);  // read from EEPROM last know time
   local_time.leap = TIME_LEAP;
-  local_time.change = DT_TIME_CHANGE | DT_DATE_CHANGE;
+  local_time.change_Hour = true;
+  local_time.change_Minute = true;
+  local_time.change_Second = true;
+  local_time.change_Date = true;
   local_time.unixTime = timeUnix();
 
   Serial.begin(38400, SERIAL_8N1);
@@ -164,7 +172,7 @@ void setup(void)
   tft.reset();
   tft.begin(tft.readID());
   tftHomeScreen();
-  timeShowClock(40);
+  timeShowClock(39);
 
   // init SD card and open file for store
   dirCounter = 0;
@@ -216,7 +224,7 @@ void loop(void)
    // clock runtime
    if( timeCounter())
    {
-      timeShowClock(40);
+      timeShowClock(39);
       timeEEPROM(true);   // every 5 min store it
 
       // when data more than 60 minutes not incomming then close and open next file
@@ -444,13 +452,14 @@ bool timeCounter()
       }
 
       local_time.lastMillis = actualMillis - local_time.milisecond;
-      local_time.change |= DT_TIME_CHANGE;
+      local_time.change_Second = true;
 
       // overflow minute, hour, day, month, year
       if( local_time.second >= 60 )
       {
         local_time.second -= 60;
         local_time.minute++;
+        local_time.change_Minute = true;
         // time shift
         local_time.lastMillis += local_time.leap;
         
@@ -458,12 +467,13 @@ bool timeCounter()
         {
           local_time.minute -= 60;
           local_time.hour++;
+          local_time.change_Hour = true;
           
           if( local_time.hour >= 24 )
           {
             local_time.hour -= 24;
             local_time.day++;
-            local_time.change |= DT_DATE_CHANGE;
+            local_time.change_Date = true;
 
             days = monthDays[ local_time.month ];
             // leap year
@@ -500,34 +510,42 @@ void tftHomeScreen()
 
   tft.setTextColor(YELLOW);
   tft.setTextSize(2);
-  tft.setCursor(10, 1);
+  tft.setCursor(9, 3);
   tft.print(F("GPRS traffic logger"));
 
+  // copyright
   tft.setTextColor(BLUE);
   tft.setTextSize(1);
   tft.setCursor(2, 310);
-  tft.print(F("Software by Zdeno Sekerak (c)2016, v0.1"));
+  tft.print(F("Software by Zdeno Sekerak (c)2016, v0.2"));
 }
 // -----------------------------------------------------------------------------
 
+void tftClearText(unsigned char x, unsigned char y, unsigned char text_size, unsigned char ind, unsigned char count)
+{
+    tft.setTextSize(text_size);
+    x += ind * text_size * FONT_WIDTH;
+    tft.fillRect(x, y, count * text_size * FONT_WIDTH, text_size * FONT_HEIGHT, BLACK);
+    tft.setCursor(x, y);
+}
+// -----------------------------------------------------------------------------
 
 void timeShowClock(short y)
 {
   char clock_buffer[3];
   
   // date
-  if( local_time.change & DT_DATE_CHANGE )
+  if( local_time.change_Date )
   {
     char monthNames[][10] = {
       "", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
     };
     
-    local_time.change &= ~DT_DATE_CHANGE;
-    tft.setCursor(17, 1+y);
-    tft.setTextColor(WHITE);
-    tft.setTextSize(3);
+    local_time.change_Date = false;
 
-    tft.fillRect(15, y, 210, 22, BLACK);
+    tftClearText(20, y, 3, 0, 11);
+    tft.setTextColor(WHITE);
+
     tft.print( printDigits( local_time.day, clock_buffer));
     tft.print(".");
     tft.print( monthNames[ local_time.month ] );              // format abbr. (Jun)
@@ -536,19 +554,35 @@ void timeShowClock(short y)
     tft.print( local_time.year);
   }
 
-  // time
-  if( local_time.change & DT_TIME_CHANGE )
+  // change hour
+  if( local_time.change_Hour )
   {
-    local_time.change &= ~DT_TIME_CHANGE;
-    tft.setCursor(20, 40+y);
-    tft.setTextColor(WHITE);
-    tft.setTextSize(4);
+    local_time.change_Hour = false;
 
-    tft.fillRect(20, 40+y, 190, 30, BLACK);
+    tftClearText(23, 40+y, 4, 0, 3);
+    tft.setTextColor(WHITE);
     tft.print( printDigits( local_time.hour, clock_buffer));
     tft.print(":");
+  }
+
+  // change minute
+  if( local_time.change_Minute )
+  {
+    local_time.change_Minute = false;
+    
+    tftClearText(23, 40+y, 4, 3, 3);
+    tft.setTextColor(WHITE);
     tft.print( printDigits( local_time.minute, clock_buffer));
     tft.print(":");
+  }
+
+  // change second
+  if( local_time.change_Second )
+  {
+    local_time.change_Second = false;
+
+    tftClearText(23, 40+y, 4, 6, 2);
+    tft.setTextColor(WHITE);
     tft.print( printDigits( local_time.second, clock_buffer));
   }
 }
@@ -562,7 +596,7 @@ void sdShowFileName(short y, char* log_file)
   tft.setTextColor(WHITE);
   tft.setTextSize(2);
 
-  tft.fillRect(1, y, 238, 18, BLACK);
+  tft.fillRect(1, y, tft.width()-2, 2*FONT_HEIGHT, BLACK);
   if( !dataFile )
     tft.print("SD card isn't avail");
   else
@@ -608,12 +642,43 @@ char* printDigits(byte digits, char* buffer)
 void terminalInit()
 {
   // terminal
-  tft.fillRect(0, 145, 240, 160, BLACK);
-  tft.drawRect(0, 145, 240, 160, WHITE);
-  tft.setCursor(0, 146);
-  
+  tft.fillRect(1, LOG_Y, tft.width()-2, LOG_HEIGHT+1, BLACK);
+  tft.drawRect(0, LOG_Y, tft.width(), LOG_HEIGHT+2, WHITE);
+  tft.setCursor(0, LOG_Y+1);
+
   terminal.X = tft.getCursorX();
   terminal.Y = tft.getCursorY();
+  terminal.clearY = LOG_Y + LOG_HEIGHT + 1;
+}
+// -----------------------------------------------------------------------------
+
+
+// clear partial lines
+void terminalClear()
+{
+  // dalsim znakom spadne na dalsi riadok
+  if(tft.getCursorX() >= (tft.width() - FONT_WIDTH))
+     tft.println();
+
+  // skoncil na stranke
+  if(tft.getCursorY() > (LOG_Y + LOG_HEIGHT))
+  {
+    tft.setCursor(0, LOG_Y+1);
+
+    terminal.X = tft.getCursorX();
+    terminal.Y = tft.getCursorY();
+    terminal.clearY = terminal.Y;
+  }
+
+  // podmaz, nepodmazane riadky pod nim
+  if(tft.getCursorY() >= terminal.clearY)
+  {
+    tft.fillRect(1, terminal.clearY, tft.width()-2, FONT_HEIGHT, BLACK);
+    terminal.clearY += FONT_HEIGHT;
+    
+    if(terminal.clearY <= (LOG_Y + LOG_HEIGHT))
+      tft.drawFastHLine(1, terminal.clearY, tft.width()-2, YELLOW);
+  }
 }
 // -----------------------------------------------------------------------------
 
@@ -625,28 +690,23 @@ void terminalShow(char *readBytes, unsigned short readLength)
   tft.setCursor(terminal.X, terminal.Y);
   tft.setTextColor(WHITE);
   tft.setTextSize(1);
-  for(i=0; i<readLength; i++)
-  {
-     if( readBytes[i] < 0x20 )
-     {
-         tft.print(' ');
-         if( readBytes[i] == '\n')
-             tft.println();
-     }
-     else
-         tft.print(readBytes[i]);
 
-    // clear it
-    if( tft.getCursorY() > 305 )
-        terminalInit();
+  for (i = 0; i < readLength; i++)
+  {
+    if ( readBytes[i] < 0x20 )
+    {
+      tft.print(' ');
+      if ( readBytes[i] == '\n')
+        tft.println();
+    }
+    else
+      tft.print(readBytes[i]);
+
+    terminalClear();
   }
 
   terminal.X = tft.getCursorX();
   terminal.Y = tft.getCursorY();
-
-  // clear it
-  if( terminal.Y > 305 )
-      terminalInit();
 }
 // -----------------------------------------------------------------------------
 
