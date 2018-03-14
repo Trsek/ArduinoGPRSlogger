@@ -21,7 +21,7 @@ Date/Time
 
 DSP
 - Using HW buy on eBay www.mcufriend.com (IDF=0x154) 240x320 pixels.
-- Use routine Adafruit it should be downloaded from https://github.com/adafruit/Adafruit-GFX-Library and https://github.com/adafruit/TFTLCD-Library.
+- Use routine Adafruit it should be downloaded from https://github.com/adafruit/Adafruit-GFX-Library and https://github.com/Trsek/TFTLCD-Library.
 
 Settings DSP:
 - define LCD_CS A3    // Chip Select goes to Analog 3
