@@ -18,7 +18,6 @@
 #define LOG_SUBDIR_IND   5   // index of 2th location char '/' in LOG_FILE
 #define LOG_DELIMITER    8   // index of 3th location char '/' in LOG_FILE
 //#define ECHO_ON_SERIAL     // uncomment - enable echo on serial port, is possible see data in "Serial monitor" or catch with PC software
-//#define FORCE_TIME         // uncomment - if you want force new Date/Time (see setup() function)
 
 #define DT_STORE_MINUTE  5   // every 5 minutes write to actually time to EEPROM
 #define SD_INIT_TIME     5   // every 6 seconds check SD card ready if is not available
@@ -144,6 +143,9 @@ short dirCounter;           // counter of dir /LOG/XXX/ on SD card
 
 void setup(void) 
 {
+  T_DateTime eeprom_time;
+  timeEEPROM(&eeprom_time, false);  // read from EEPROM last know time
+
   // default time
   local_time.year   = 2000 + atoi2(__DATE__ + 9);
   local_time.month  = __MONTH__;
@@ -152,21 +154,21 @@ void setup(void)
   local_time.minute = atoi2(__TIME__ + 3);
   local_time.second = atoi2(__TIME__ + 6);
   local_time.milisecond = 0;
-#ifdef FORCE_TIME
-  EEPROM[0] = '\0';   // damage control byte in timeEPROM (rountine timeEEPROM() save it)
-#endif
-  timeEEPROM(false);  // read from EEPROM last know time
+
+  if (timeUnix(&eeprom_time) > timeUnix(&local_time))
+    local_time = eeprom_time;
+
   local_time.leap = TIME_LEAP;
   local_time.change_Hour = true;
   local_time.change_Minute = true;
   local_time.change_Second = true;
   local_time.change_Date = true;
-  local_time.unixTime = timeUnix();
+  local_time.unixTime = timeUnix(&local_time);
 
   Serial.begin(38400, SERIAL_8N1);
   Serial.setTimeout(100);
 #ifndef ECHO_ON_SERIAL
-  Serial.println(F("GPRS traffic logger. Software by Zdeno Sekerak (c) 2016."));
+  Serial.println(F("GPRS traffic logger. Software by Zdeno Sekerak (c) 2020."));
 #endif
 
   tft.reset();
@@ -225,7 +227,7 @@ void loop(void)
    if( timeCounter())
    {
       timeShowClock(39);
-      timeEEPROM(true);   // every 5 min store it
+      timeEEPROM(&local_time, true);   // every 5 min store it
 
       // when data more than 60 minutes not incomming then close and open next file
       if(( charCounter > 0 )
@@ -337,21 +339,21 @@ void sdMakeNew()
 
 
 // local_time convert to unix format
-unsigned long timeUnix()
+unsigned long timeUnix(T_DateTime* ptr_time)
 {
   unsigned long unix_time;
   unsigned char leap;
 
   unix_time = 
-           (unsigned long)local_time.second 
-         + (unsigned long)local_time.minute * SEC_PER_MIN 
-         + (unsigned long)local_time.hour * SEC_PER_HOUR
-         + ((unsigned long)local_time.day -1 + (unsigned long)yearDays[ local_time.month-1 ]) * SEC_PER_DAY 
-         + (unsigned long)(local_time.year - 2000) * SEC_PER_DAY * 365;
+           (unsigned long)ptr_time->second 
+         + (unsigned long)ptr_time->minute * SEC_PER_MIN 
+         + (unsigned long)ptr_time->hour * SEC_PER_HOUR
+         + ((unsigned long)ptr_time->day -1 + (unsigned long)yearDays[ ptr_time->month-1 ]) * SEC_PER_DAY 
+         + (unsigned long)(ptr_time->year - 2000) * SEC_PER_DAY * 365;
          
-  leap = ((local_time.year - 2000)/4) + 1;
-  if (( local_time.year % 4) == 0 ) {
-      if (local_time.month < 3)
+  leap = ((ptr_time->year - 2000)/4) + 1;
+  if (( ptr_time->year % 4) == 0 ) {
+      if (ptr_time->month < 3)
           leap--;
   }
 
@@ -384,19 +386,19 @@ void pcapStore(char *serial_buffer, unsigned short readLength)
 
 // store/read time to/from EEPROM
 // if first bytes in EEPROM is 'DT' I suppose is it correct
-void timeEEPROM(bool timeStore)
+void timeEEPROM(T_DateTime* ptr_time, bool timeStore)
 {
   if( timeStore )
   {
     // every 5 minute write to EEPROM
-    if(( local_time.second == 0 )
-    && (( local_time.minute % DT_STORE_MINUTE ) == 0))
+    if(( ptr_time->second == 0 )
+    && (( ptr_time->minute % DT_STORE_MINUTE ) == 0))
     {
       EEPROM[0] = DT_MARK0;
       EEPROM[1] = DT_MARK1;
-      for(unsigned int i=0; i<sizeof(local_time); i++)
+      for(unsigned int i=0; i<sizeof(*ptr_time); i++)
       {
-        EEPROM[i+2] = ((unsigned char*)&local_time)[i];
+        EEPROM[i+2] = ((unsigned char*)ptr_time)[i];
       }
     }
   }
@@ -406,18 +408,17 @@ void timeEEPROM(bool timeStore)
     if(( EEPROM[0] == DT_MARK0 )
     && ( EEPROM[1] == DT_MARK1 ))
     {
-      for(unsigned int i=0; i<sizeof(local_time); i++)
+      for(unsigned int i=0; i<sizeof(*ptr_time); i++)
       {
-        ((unsigned char*)&local_time)[i] = EEPROM[i+2];
+        ((unsigned char*)ptr_time)[i] = EEPROM[i+2];
       }
     }
     else
-    { // damage that store it
-      EEPROM[0] = DT_MARK0;
-      EEPROM[1] = DT_MARK1;
-      for(unsigned int i=0; i<sizeof(local_time); i++)
+    {
+      // clear it
+      for(unsigned int i=0; i<sizeof(*ptr_time); i++)
       {
-        EEPROM[i+2] = ((unsigned char*)&local_time)[i];
+        ((unsigned char*)ptr_time)[i] = 0;
       }
     }
   }
@@ -709,4 +710,3 @@ void terminalShow(char *readBytes, unsigned short readLength)
   terminal.Y = tft.getCursorY();
 }
 // -----------------------------------------------------------------------------
-
